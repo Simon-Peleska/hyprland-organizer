@@ -71,7 +71,19 @@ pub fn getClients(allocator: std.mem.Allocator) ![]types.Client {
     return result.value;
 }
 
-pub fn listenForEvents(allocator: std.mem.Allocator, handler: *const fn (line: []const u8) anyerror!void) !void {
+pub fn getActiveWindow(allocator: std.mem.Allocator) !?types.Client {
+    const json_data = try hyprlandCommand(allocator, "j/activewindow");
+    // defer allocator.free(json_data);
+
+    const result = std.json.parseFromSlice(?types.Client, allocator, json_data, .{ .ignore_unknown_fields = true }) catch |err| {
+        std.log.err("failed to parse clients JSON: {any}", .{err});
+        return HyprlandError.JsonParseFailed;
+    };
+    return result.value;
+}
+
+pub fn listenForEvents(allocator: std.mem.Allocator, handler: *const fn (allocator: std.mem.Allocator, line: []const u8, app_groups: []const []const u8) anyerror!void, app_groups: []const []const u8) !void {
+
     const socket_path = try getSocketPath(allocator, ".socket2.sock");
     defer allocator.free(socket_path);
 
@@ -84,6 +96,10 @@ pub fn listenForEvents(allocator: std.mem.Allocator, handler: *const fn (line: [
     std.log.info("listening for hyprland events on {s}", .{socket_path});
     var buffer: [1024]u8 = undefined;
     while (try reader.readUntilDelimiterOrEof(&buffer, '\n')) |line| {
-        try handler(line);
+        var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        defer arena.deinit();
+        const arena_allocator = arena.allocator();
+
+        try handler(arena_allocator, line, app_groups);
     }
 }
