@@ -15,9 +15,10 @@ pub fn main() !void {
     const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
 
-    var listen = false;
     var app_groups_list = std.ArrayList([]const u8).init(allocator);
     defer app_groups_list.deinit();
+
+    var listen = false;
 
     for (args[1..]) |arg| {
         if (std.mem.eql(u8, arg, "--listen")) {
@@ -26,51 +27,47 @@ pub fn main() !void {
             try app_groups_list.append(arg);
         }
     }
-    const app_groups = try app_groups_list.toOwnedSlice();
 
+    const app_groups = try app_groups_list.toOwnedSlice();
     try organizeWorkspaces(allocator, app_groups);
 
-    if (listen) {
-        try hyprland.listenForEvents(allocator, eventHandler, app_groups);
-    }
+    if (listen) try hyprland.listenForEvents(allocator, eventHandler, app_groups);
 }
 
 fn organizeWorkspaces(allocator: std.mem.Allocator, app_groups: []const []const u8) !void {
-
     const monitors = try hyprland.getMonitors(allocator);
+    defer allocator.free(monitors);
 
     std.sort.block(types.Monitor, monitors, {}, types.Monitor.monitorLessThan);
 
     for (monitors, 1..) |monitor, i| {
-        try hyprland.sendCommand(allocator, try std.fmt.allocPrint(allocator, "dispatch moveworkspacetomonitor {d} {d}", .{ i, monitor.id }));
+        const command = try std.fmt.allocPrint(allocator, "dispatch moveworkspacetomonitor {d} {d}", .{ i, monitor.id });
+        try hyprland.sendCommand(allocator, command);
     }
 
     for (app_groups, 1..) |app_group, i| {
-        if (std.mem.eql(u8, app_group, "skip")) {
-            continue;
-        }
+        if (std.mem.eql(u8, app_group, "skip")) continue;
 
         var apps = std.mem.splitScalar(u8, app_group, ',');
         const clients = try hyprland.getClients(allocator);
         const active_window = try hyprland.getActiveWindow(allocator);
 
         while (apps.next()) |app| {
-            var client_found = false;
+            var command: ?[]u8 = null;
             for (clients) |client| {
-                if (std.mem.indexOf(u8, client.class, app) != null) {
-                    try hyprland.sendCommand(allocator, try std.fmt.allocPrint(allocator, "dispatch movetoworkspacesilent {d},address:{s}", .{ i, client.address }));
-                    client_found = true;
-                    break;
-                }
+                if (std.mem.indexOf(u8, client.class, app) == null) continue;
+                
+                command = try std.fmt.allocPrint(allocator, "dispatch movetoworkspacesilent {d},address:{s}", .{ i, client.address });
+                break;
             }
 
-            if (!client_found) {
-                try hyprland.sendCommand(allocator, try std.fmt.allocPrint(allocator, "dispatch exec [workspace {d} silent] {s}", .{ i, app }));
-            }
+            const command_result = command orelse try std.fmt.allocPrint(allocator, "dispatch exec [workspace {d} silent] {s}", .{ i, app });
+            try hyprland.sendCommand(allocator, command_result);
         }
 
         if (active_window) |active_window_result| {
-            try hyprland.sendCommand(allocator, try std.fmt.allocPrint(allocator, "dispatch focuswindow address:{s}", .{active_window_result.address}));
+            const command = try std.fmt.allocPrint(allocator, "dispatch focuswindow address:{s}", .{active_window_result.address});
+            try hyprland.sendCommand(allocator, command);
         }
     }
 }
