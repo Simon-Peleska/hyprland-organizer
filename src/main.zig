@@ -45,18 +45,20 @@ fn organizeWorkspaces(allocator: std.mem.Allocator, app_groups: []const []const 
         try hyprland.sendCommand(allocator, command);
     }
 
+    const active_window = try hyprland.getActiveWindow(allocator);
+    const cursor_position = try hyprland.getCursorPosition(allocator);
+
     for (app_groups, 1..) |app_group, i| {
         if (std.mem.eql(u8, app_group, "skip")) continue;
 
         var apps = std.mem.splitScalar(u8, app_group, ',');
         const clients = try hyprland.getClients(allocator);
-        const active_window = try hyprland.getActiveWindow(allocator);
 
         while (apps.next()) |app| {
             var command: ?[]u8 = null;
             for (clients) |client| {
                 if (std.mem.indexOf(u8, client.class, app) == null) continue;
-                
+
                 command = try std.fmt.allocPrint(allocator, "dispatch movetoworkspacesilent {d},address:{s}", .{ i, client.address });
                 break;
             }
@@ -64,10 +66,24 @@ fn organizeWorkspaces(allocator: std.mem.Allocator, app_groups: []const []const 
             const command_result = command orelse try std.fmt.allocPrint(allocator, "dispatch exec [workspace {d} silent] {s}", .{ i, app });
             try hyprland.sendCommand(allocator, command_result);
         }
+    }
 
-        if (active_window) |active_window_result| {
-            const command = try std.fmt.allocPrint(allocator, "dispatch focuswindow address:{s}", .{active_window_result.address});
-            try hyprland.sendCommand(allocator, command);
+    if (active_window) |active_window_result| {
+        const command = try std.fmt.allocPrint(allocator, "dispatch focuswindow address:{s}", .{active_window_result.address});
+        try hyprland.sendCommand(allocator, command);
+
+        const active_window_new = try hyprland.getActiveWindow(allocator);
+        if (active_window_new) |active_window_new_result| {
+            const relative_x: i32 = @intFromFloat(@as(f32, @floatFromInt(cursor_position.x - active_window_result.at[0])) * (@as(f32, @floatFromInt(active_window_new_result.size[0])) / @as(f32, @floatFromInt(active_window_result.size[0]))));
+            const relative_y: i32 = @intFromFloat(@as(f32, @floatFromInt(cursor_position.y - active_window_result.at[1])) * (@as(f32, @floatFromInt(active_window_new_result.size[1])) / @as(f32, @floatFromInt(active_window_result.size[1]))));
+
+            if (relative_x <= active_window_new_result.size[0] and relative_y <= active_window_new_result.size[1]) {
+                const x: i32 = relative_x + active_window_new_result.at[0];
+                const y: i32 = relative_y + active_window_new_result.at[1];
+
+                const mouse_command = try std.fmt.allocPrint(allocator, "dispatch movecursor {d} {d}", .{ x, y });
+                try hyprland.sendCommand(allocator, mouse_command);
+            }
         }
     }
 }
@@ -78,4 +94,3 @@ fn eventHandler(allocator: std.mem.Allocator, line: []const u8, app_groups: []co
         try organizeWorkspaces(allocator, app_groups);
     }
 }
-

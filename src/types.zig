@@ -1,6 +1,5 @@
 const std = @import("std");
 
-/// Represents a monitor as reported by `hyprctl monitors -j`.
 pub const Monitor = struct {
     description: []const u8,
     id: i64,
@@ -24,8 +23,14 @@ pub const Monitor = struct {
     }
 };
 
-/// Represents a client (window) as reported by `hyprctl clients -j`.
 pub const Client = struct {
     address: []const u8,
     class: []const u8,
+    at: []i32,
+    size: []i32,
+};
+
+pub const CursorPosition = struct {
+    x: i32,
+    y: i32,
 };

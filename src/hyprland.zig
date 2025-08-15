@@ -62,7 +62,6 @@ pub fn getMonitors(allocator: std.mem.Allocator) ![]types.Monitor {
 
 pub fn getClients(allocator: std.mem.Allocator) ![]types.Client {
     const json_data = try hyprlandCommand(allocator, "j/clients");
-    // defer allocator.free(json_data);
 
     const result = std.json.parseFromSlice([]types.Client, allocator, json_data, .{ .ignore_unknown_fields = true }) catch |err| {
         std.log.err("failed to parse clients JSON: {any}", .{err});
@@ -73,12 +72,21 @@ pub fn getClients(allocator: std.mem.Allocator) ![]types.Client {
 
 pub fn getActiveWindow(allocator: std.mem.Allocator) !?types.Client {
     const json_data = try hyprlandCommand(allocator, "j/activewindow");
-    // defer allocator.free(json_data);
     if(std.mem.eql(u8, json_data, "{}")) {
         return null;
     }
 
     const result = std.json.parseFromSlice(?types.Client, allocator, json_data, .{ .ignore_unknown_fields = true }) catch |err| {
+        std.log.err("failed to parse clients JSON: {any}", .{err});
+        return HyprlandError.JsonParseFailed;
+    };
+    return result.value;
+}
+
+pub fn getCursorPosition(allocator: std.mem.Allocator) !types.CursorPosition {
+    const json_data = try hyprlandCommand(allocator, "j/cursorpos");
+
+    const result = std.json.parseFromSlice(types.CursorPosition, allocator, json_data, .{ .ignore_unknown_fields = true }) catch |err| {
         std.log.err("failed to parse clients JSON: {any}", .{err});
         return HyprlandError.JsonParseFailed;
     };
