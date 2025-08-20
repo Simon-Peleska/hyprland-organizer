@@ -59,9 +59,12 @@ fn organizeWorkspaces(allocator: Allocator, app_groups: []const []const u8) !voi
         const clients = try hyprland.getClients(allocator);
 
         while (apps.next()) |app| {
+            var already_started = false;
             var command: ?[]u8 = null;
             for (clients) |client| {
                 if (std.mem.indexOf(u8, client.class, app) == null) continue;
+                already_started = true;
+
                 if (client.workspace.id == i) break;
                 
                 const init_command_result = try fmt(allocator, "dispatch movetoworkspacesilent special:{s},address:{s};", .{ client.address, client.address });
@@ -71,8 +74,11 @@ fn organizeWorkspaces(allocator: Allocator, app_groups: []const []const u8) !voi
                 break;
             }
 
-            const command_result = command orelse try fmt(allocator, "dispatch exec [workspace {d} silent] {s};", .{ i, app });
-            try commands.appendSlice(command_result);
+            if(!already_started) {
+                const command_result = command orelse try fmt(allocator, "dispatch exec [workspace {d} silent] {s};", .{ i, app });
+                try commands.appendSlice(command_result);
+            }
+
        }
     }
 
