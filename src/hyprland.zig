@@ -29,7 +29,7 @@ fn getSocketPath(allocator: std.mem.Allocator, socket_name: []const u8) ![]const
     });
 }
 
-fn hyprlandCommand(allocator: std.mem.Allocator, command: []const u8) ![]u8 {
+pub fn hyprlandCommand(allocator: std.mem.Allocator, command: []const u8) ![]u8 {
     const socket_path = try getSocketPath(allocator, ".socket.sock");
     defer allocator.free(socket_path);
 
@@ -39,15 +39,6 @@ fn hyprlandCommand(allocator: std.mem.Allocator, command: []const u8) ![]u8 {
     try stream.writer().writeAll(command);
 
     return stream.reader().readAllAlloc(allocator, 1024 * 1024); // 1MB limit
-}
-
-pub fn sendCommand(allocator: std.mem.Allocator, commands: []const u8) !void {
-    if (commands.len == 0) return;
-    const batch_command = try std.fmt.allocPrint(allocator, "{s}", .{commands});
-    defer allocator.free(batch_command);
-    const output = try hyprlandCommand(allocator, batch_command);
-
-    defer allocator.free(output); // free the reply, we don't care about it.
 }
 
 pub fn getMonitors(allocator: std.mem.Allocator) ![]types.Monitor {
