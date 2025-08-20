@@ -24,7 +24,7 @@ pub const Monitor = struct {
 };
 
 pub const Workspace = struct {
-    id: u64,
+    id: i64,
     name: []u8,
 };
 

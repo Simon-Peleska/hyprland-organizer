@@ -43,7 +43,6 @@ fn organizeWorkspaces(allocator: Allocator, app_groups: []const []const u8) !voi
 
     std.sort.block(types.Monitor, monitors, {}, types.Monitor.monitorLessThan);
     var commands = std.ArrayList(u8).init(allocator);
-    var initial_commands = std.ArrayList(u8).init(allocator);
     for (monitors, 1..) |monitor, i| {
         const command = try fmt(allocator, "dispatch moveworkspacetomonitor {d} {d};", .{ i, monitor.id });
         try commands.appendSlice(command);
@@ -51,35 +50,29 @@ fn organizeWorkspaces(allocator: Allocator, app_groups: []const []const u8) !voi
 
     const active_window = try hyprland.getActiveWindow(allocator);
     const cursor_position = try hyprland.getCursorPosition(allocator);
+    const clients = try hyprland.getClients(allocator);
 
     for (app_groups, 1..) |app_group, i| {
         if (eql(u8, app_group, "skip")) continue;
 
         var apps = std.mem.splitScalar(u8, app_group, ',');
-        const clients = try hyprland.getClients(allocator);
-
         while (apps.next()) |app| {
             var already_started = false;
             var command: ?[]u8 = null;
+
             for (clients) |client| {
                 if (std.mem.indexOf(u8, client.class, app) == null) continue;
                 already_started = true;
 
                 if (client.workspace.id == i) break;
-                
-                const init_command_result = try fmt(allocator, "dispatch movetoworkspacesilent special:{s},address:{s};", .{ client.address, client.address });
-                try initial_commands.appendSlice(init_command_result);
 
                 command = try fmt(allocator, "dispatch movetoworkspacesilent {d},address:{s};", .{ i, client.address });
                 break;
             }
 
-            if(!already_started) {
-                const command_result = command orelse try fmt(allocator, "dispatch exec [workspace {d} silent] {s};", .{ i, app });
-                try commands.appendSlice(command_result);
-            }
-
-       }
+            if (!already_started) command = try fmt(allocator, "dispatch exec [workspace {d} silent] {s};", .{ i, app });
+            if (command) |command_result| try commands.appendSlice(command_result);
+        }
     }
 
     if (active_window) |active_window_result| {
@@ -87,7 +80,7 @@ fn organizeWorkspaces(allocator: Allocator, app_groups: []const []const u8) !voi
         try commands.appendSlice(command);
     }
 
-    const result = try hyprland.hyprlandCommand(allocator, try fmt(allocator, "[[BATCH]]{s}{s}", .{initial_commands.items, commands.items}));
+    const result = try hyprland.hyprlandCommand(allocator, try fmt(allocator, "[[BATCH]]{s}", .{ commands.items }));
     defer allocator.free(result);
 
     if (active_window) |active_window_result| {
