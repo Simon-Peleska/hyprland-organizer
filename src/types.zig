@@ -23,11 +23,17 @@ pub const Monitor = struct {
     }
 };
 
+pub const Workspace = struct {
+    id: u64,
+    name: []u8,
+};
+
 pub const Client = struct {
     address: []const u8,
     class: []const u8,
     at: []i32,
     size: []i32,
+    workspace: Workspace,
 };
 
 pub const CursorPosition = struct {

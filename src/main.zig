@@ -62,7 +62,8 @@ fn organizeWorkspaces(allocator: Allocator, app_groups: []const []const u8) !voi
             var command: ?[]u8 = null;
             for (clients) |client| {
                 if (std.mem.indexOf(u8, client.class, app) == null) continue;
-
+                if (client.workspace.id == i) break;
+                
                 const init_command_result = try fmt(allocator, "dispatch movetoworkspacesilent special:{s},address:{s};", .{ client.address, client.address });
                 try initial_commands.appendSlice(init_command_result);
 
