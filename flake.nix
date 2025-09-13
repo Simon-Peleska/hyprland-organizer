@@ -16,6 +16,8 @@
       # Produces clean binaries meant to be ship'd outside of nix
       # nix build .#foreign
       packages.foreign = env.package {
+        name = "hyprland-organizer";
+        pname = "hyprland-organizer";
         src = cleanSource ./.;
 
         # Packages required for compiling

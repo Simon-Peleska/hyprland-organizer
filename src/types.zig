@@ -31,12 +31,12 @@ pub const Workspace = struct {
 pub const Client = struct {
     address: []const u8,
     class: []const u8,
-    at: []i32,
-    size: []i32,
+    at: []f32,
+    size: []f32,
     workspace: Workspace,
 };
 
 pub const CursorPosition = struct {
-    x: i32,
-    y: i32,
+    x: f32,
+    y: f32,
 };

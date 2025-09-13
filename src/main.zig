@@ -11,46 +11,73 @@ const AppError = error{
 };
 
 pub fn main() !void {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
+    var arena_allocator = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena_allocator.deinit();
+    const arena = arena_allocator.allocator();
 
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+    const args = try std.process.argsAlloc(arena);
 
-    var app_groups_list = std.ArrayList([]const u8).init(allocator);
-    defer app_groups_list.deinit();
+    const listen = args.len >= 2 and eql(u8, args[1], "--listen");
+    const app_groups = args[(if (listen) 2 else 1)..];
 
-    var listen = false;
+    organizeWorkspaces(arena, app_groups);
 
-    for (args[1..]) |arg| {
-        if (eql(u8, arg, "--listen")) {
-            listen = true;
-        } else {
-            try app_groups_list.append(arg);
-        }
-    }
-
-    const app_groups = try app_groups_list.toOwnedSlice();
-    try organizeWorkspaces(allocator, app_groups);
-
-    if (listen) try hyprland.listenForEvents(allocator, eventHandler, app_groups);
+    if (listen) try hyprland.listenForEvents(arena, eventHandler, app_groups);
 }
 
-fn organizeWorkspaces(allocator: Allocator, app_groups: []const []const u8) !void {
-    const monitors = try hyprland.getMonitors(allocator);
-    defer allocator.free(monitors);
+fn eventHandler(allocator: Allocator, line: []const u8, app_groups: []const []const u8) void {
+    if (!std.mem.startsWith(u8, line, "monitoraddedv2") and !std.mem.startsWith(u8, line, "monitorremovedv2")) return;
+
+    std.time.sleep(200 * 1000 * 1000); // 200ms
+    organizeWorkspaces(allocator, app_groups);
+}
+
+fn organizeWorkspaces(arena: Allocator, app_groups: []const []const u8) void {
+    const active_window = hyprland.getActiveWindow(arena) catch |err| {
+        std.log.err("Failed to get active window: {any}", .{err});
+        return null;
+    };
+    const cursor_position = hyprland.getCursorPosition(arena) catch |err| {
+        std.log.err("Failed to get cursor position: {any}", .{err});
+        return null;
+    };
+
+    moveWorkspaces(arena) catch |err| {
+        std.log.err("Failed to move workspaces: {any}", .{err});
+        return;
+    };
+    moveApplications(arena, app_groups) catch |err| {
+        std.log.err("Failed to move applications: {any}", .{err});
+        return;
+    };
+
+    if (active_window != null and cursor_position != null) {
+        setMouseToActiveWindow(arena, active_window.?, cursor_position.?) catch |err| {
+            std.log.err("Failed to set mouse to active window: {any}", .{err});
+            return;
+        };
+    } else {
+        _ = hyprland.hyprlandCommand(arena, "dispatch workspace 1") catch |err| {
+            std.log.err("Failed to dispatch workspace 1: {any}", .{err});
+            return;
+        };
+    }
+}
+
+fn moveWorkspaces(arena: Allocator) !void {
+    const monitors = try hyprland.getMonitors(arena);
 
     std.sort.block(types.Monitor, monitors, {}, types.Monitor.monitorLessThan);
-    var commands = std.ArrayList(u8).init(allocator);
     for (monitors, 1..) |monitor, i| {
-        const command = try fmt(allocator, "dispatch moveworkspacetomonitor {d} {d};", .{ i, monitor.id });
-        try commands.appendSlice(command);
+        const command = try fmt(arena, "dispatch workspace {d}", .{ i });
+        _ = try hyprland.hyprlandCommand(arena, command);
+        const command2 = try fmt(arena, "dispatch moveworkspacetomonitor {d} {d}", .{ i, monitor.id });
+        _ = try hyprland.hyprlandCommand(arena, command2);
     }
+}
 
-    const active_window = try hyprland.getActiveWindow(allocator);
-    const cursor_position = try hyprland.getCursorPosition(allocator);
-    const clients = try hyprland.getClients(allocator);
+fn moveApplications(arena: Allocator, app_groups: []const []const u8) !void {
+    const clients = try hyprland.getClients(arena);
 
     for (app_groups, 1..) |app_group, i| {
         if (eql(u8, app_group, "skip")) continue;
@@ -62,48 +89,37 @@ fn organizeWorkspaces(allocator: Allocator, app_groups: []const []const u8) !voi
 
             for (clients) |client| {
                 if (std.mem.indexOf(u8, client.class, app) == null) continue;
+
                 already_started = true;
 
                 if (client.workspace.id == i) break;
 
-                command = try fmt(allocator, "dispatch movetoworkspacesilent {d},address:{s};", .{ i, client.address });
+                command = try fmt(arena, "dispatch movetoworkspacesilent {d},address:{s}", .{ i, client.address });
                 break;
             }
 
-            if (!already_started) command = try fmt(allocator, "dispatch exec [workspace {d} silent] {s};", .{ i, app });
-            if (command) |command_result| try commands.appendSlice(command_result);
-        }
-    }
-
-    if (active_window) |active_window_result| {
-        const command = try fmt(allocator, "dispatch focuswindow address:{s};", .{active_window_result.address});
-        try commands.appendSlice(command);
-    }
-
-    const result = try hyprland.hyprlandCommand(allocator, try fmt(allocator, "[[BATCH]]{s}", .{ commands.items }));
-    defer allocator.free(result);
-
-    if (active_window) |active_window_result| {
-        const active_window_new = try hyprland.getActiveWindow(allocator);
-        if (active_window_new) |active_window_new_result| {
-            const relative_x: i32 = @intFromFloat(@as(f32, @floatFromInt(cursor_position.x - active_window_result.at[0])) * (@as(f32, @floatFromInt(active_window_new_result.size[0])) / @as(f32, @floatFromInt(active_window_result.size[0]))));
-            const relative_y: i32 = @intFromFloat(@as(f32, @floatFromInt(cursor_position.y - active_window_result.at[1])) * (@as(f32, @floatFromInt(active_window_new_result.size[1])) / @as(f32, @floatFromInt(active_window_result.size[1]))));
-
-            if (relative_x <= active_window_new_result.size[0] and relative_y <= active_window_new_result.size[1]) {
-                const x: i32 = relative_x + active_window_new_result.at[0];
-                const y: i32 = relative_y + active_window_new_result.at[1];
-
-                const mouse_command = try fmt(allocator, "dispatch movecursor {d} {d}", .{ x, y });
-                const result2 = try hyprland.hyprlandCommand(allocator, mouse_command);
-                defer allocator.free(result2);
-            }
+            if (!already_started) command = try fmt(arena, "dispatch exec [workspace {d} silent] {s}", .{ i, app });
+            if (command) |command_result| _ = try hyprland.hyprlandCommand(arena, command_result);
         }
     }
 }
 
-fn eventHandler(allocator: Allocator, line: []const u8, app_groups: []const []const u8) anyerror!void {
-    if (std.mem.startsWith(u8, line, "monitoraddedv2") or std.mem.startsWith(u8, line, "monitorremovedv2")) {
-        std.time.sleep(200 * 1000 * 1000); // 200ms
-        try organizeWorkspaces(allocator, app_groups);
+fn setMouseToActiveWindow(arena: Allocator, active_window_old: types.Client, cursor_position: types.CursorPosition) !void {
+    const command = try fmt(arena, "dispatch focuswindow address:{s}", .{active_window_old.address});
+    _ = try hyprland.hyprlandCommand(arena, command);
+
+    const active_window_new = try hyprland.getActiveWindow(arena) orelse return;
+
+    const relative_x: f32 = (cursor_position.x - active_window_old.at[0]) * (active_window_new.size[0] / active_window_old.size[0]);
+    const relative_y: f32 = (cursor_position.y - active_window_old.at[1]) * (active_window_new.size[1] / active_window_old.size[1]);
+
+    if (relative_x <= active_window_new.size[0] and relative_y <= active_window_new.size[1]) {
+        const x: i32 = @intFromFloat(relative_x + active_window_new.at[0]);
+        const y: i32 = @intFromFloat(relative_y + active_window_new.at[1]);
+
+        const mouse_command = try fmt(arena, "dispatch movecursor {d} {d}", .{ x, y });
+        _ = try hyprland.hyprlandCommand(arena, mouse_command);
     }
+    
 }
+
