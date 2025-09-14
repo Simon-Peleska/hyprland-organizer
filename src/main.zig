@@ -33,19 +33,21 @@ fn eventHandler(allocator: Allocator, line: []const u8, app_groups: []const []co
 }
 
 fn organizeWorkspaces(arena: Allocator, app_groups: []const []const u8) void {
-    const active_window = hyprland.getActiveWindow(arena) catch |err| {
+    const active_window = hyprland.getActiveWindow(arena) catch |err| blk: {
         std.log.err("Failed to get active window: {any}", .{err});
-        return null;
+        break :blk null;
     };
-    const cursor_position = hyprland.getCursorPosition(arena) catch |err| {
+
+    const cursor_position = hyprland.getCursorPosition(arena) catch |err| blk: {
         std.log.err("Failed to get cursor position: {any}", .{err});
-        return null;
+        break :blk null;
     };
 
     moveWorkspaces(arena) catch |err| {
         std.log.err("Failed to move workspaces: {any}", .{err});
         return;
     };
+
     moveApplications(arena, app_groups) catch |err| {
         std.log.err("Failed to move applications: {any}", .{err});
         return;
@@ -54,12 +56,10 @@ fn organizeWorkspaces(arena: Allocator, app_groups: []const []const u8) void {
     if (active_window != null and cursor_position != null) {
         setMouseToActiveWindow(arena, active_window.?, cursor_position.?) catch |err| {
             std.log.err("Failed to set mouse to active window: {any}", .{err});
-            return;
         };
     } else {
         _ = hyprland.hyprlandCommand(arena, "dispatch workspace 1") catch |err| {
             std.log.err("Failed to dispatch workspace 1: {any}", .{err});
-            return;
         };
     }
 }
