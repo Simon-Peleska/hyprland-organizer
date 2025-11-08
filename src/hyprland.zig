@@ -32,9 +32,21 @@ pub fn hyprlandCommand(arena: std.mem.Allocator, command: []const u8) ![]u8 {
     const stream = try std.net.connectUnixSocket(socket_path);
     defer stream.close();
 
-    try stream.writer().writeAll(command);
+    const BUFFER_SIZE = 8192;
 
-    const result = try stream.reader().readAllAlloc(arena, 1024 * 16); // 16kB limit
+    var send_buffer: [BUFFER_SIZE]u8 = undefined;
+    var writer = stream.writer(&send_buffer);
+    var writer_interface = &writer.interface;
+
+    try writer_interface.writeAll(command);
+    try writer_interface.flush();
+
+    var read_buffer: [BUFFER_SIZE]u8 = undefined;
+
+    var reader = stream.reader(&read_buffer);
+    var reader_interface = reader.interface();
+
+    const result = try reader_interface.allocRemaining(arena, std.Io.Limit.unlimited);
 
     return result;
 }
@@ -56,14 +68,14 @@ pub fn getClients(arena: std.mem.Allocator) ![]types.Client {
         std.log.err("failed to parse clients JSON: {any}", .{err});
         return HyprlandError.JsonParseFailed;
     };
-    
+
     return result.value;
 }
 
 pub fn getActiveWindow(arena: std.mem.Allocator) !?types.Client {
     const json_data = try hyprlandCommand(arena, "j/activewindow");
 
-    if(std.mem.eql(u8, json_data, "{}")) return null;
+    if (std.mem.eql(u8, json_data, "{}")) return null;
 
     const result = std.json.parseFromSlice(?types.Client, arena, json_data, .{ .ignore_unknown_fields = true }) catch |err| {
         std.log.err("failed to parse clients JSON: {any}", .{err});
@@ -90,17 +102,22 @@ pub fn listenForEvents(arena: std.mem.Allocator, handler: *const fn (arena: std.
     const stream = try std.net.connectUnixSocket(socket_path);
     defer stream.close();
 
-    var buf_reader = std.io.bufferedReader(stream.reader());
-    const reader = buf_reader.reader();
+    var read_buffer: [1024]u8 = undefined;
+    var reader = stream.reader(&read_buffer);
+    var reader_interface = reader.interface();
 
     std.log.info("listening for hyprland events on {s}", .{socket_path});
-    var buffer: [1024]u8 = undefined;
 
-    while (try reader.readUntilDelimiterOrEof(&buffer, '\n')) |line| {
+    while (reader_interface.takeDelimiterInclusive('\n')) |line| {
         var arena_allocator = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         defer arena_allocator.deinit();
         const event_arena = arena_allocator.allocator();
 
         handler(event_arena, line, app_groups);
+    } else |err| switch (err) {
+        error.EndOfStream, // stream ended not on a line break
+        error.StreamTooLong, // line could not fit in buffer
+        error.ReadFailed, // caller can check reader implementation for diagnostics
+        => |e| return e,
     }
 }
