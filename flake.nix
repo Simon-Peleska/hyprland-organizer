@@ -33,7 +33,7 @@
       # nix build .
       packages.default = packages.foreign.override (attrs: {
         # Prefer nix friendly settings.
-        zigPreferMusl = false;
+        zigPreferMusl = true;
 
         # Executables required for runtime
         # These packages will be added to the PATH
