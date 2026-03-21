@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"sort"
 	"strings"
 	"time"
 )
@@ -14,9 +15,10 @@ import (
 const managedTag = "ho-managed"
 
 type Client struct {
-	Address   string   `json:"address"`
-	Class     string   `json:"class"`
-	Tags      []string `json:"tags"`
+	Address   string     `json:"address"`
+	Class     string     `json:"class"`
+	Tags      []string   `json:"tags"`
+	At        [2]float64 `json:"at"`
 	Workspace struct {
 		ID int `json:"id"`
 	} `json:"workspace"`
@@ -49,6 +51,46 @@ func main() {
 
 	if len(launched) > 0 {
 		tagNewClients(launched)
+	}
+
+	enforceOrder(apps, workspace.ID)
+}
+
+func enforceOrder(apps []string, workspaceID int) {
+	clients := query[[]Client]("j/clients")
+
+	// Collect clients on this workspace matching our apps, in parameter order
+	type entry struct {
+		address string
+		x       float64
+	}
+	var entries []entry
+	for _, app := range apps {
+		appLower := strings.ToLower(app)
+		for _, c := range clients {
+			if c.Workspace.ID == workspaceID && strings.Contains(strings.ToLower(c.Class), appLower) {
+				entries = append(entries, entry{c.Address, c.At[0]})
+				break
+			}
+		}
+	}
+
+	if len(entries) < 2 {
+		return
+	}
+
+	// Get the target x-positions by sorting current positions
+	sorted := make([]float64, len(entries))
+	for i, e := range entries {
+		sorted[i] = e.x
+	}
+	sort.Float64s(sorted)
+
+	// Swap windows that aren't in the right position
+	// Focus each window in reverse parameter order so the first ends up leftmost
+	for i := len(entries) - 1; i >= 0; i-- {
+		hyprctl(fmt.Sprintf("dispatch focuswindow address:%s", entries[i].address))
+		hyprctl("dispatch movewindow l")
 	}
 }
 
