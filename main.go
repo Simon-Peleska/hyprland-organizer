@@ -33,7 +33,10 @@ func main() {
 	apps := os.Args[2:]
 	workspace := struct{ ID int }{}
 	fmt.Sscanf(os.Args[1], "%d", &workspace.ID)
-	hyprctl(fmt.Sprintf("dispatch workspace %d", workspace.ID))
+	active := query[struct{ ID int }]("j/activeworkspace")
+	if active.ID != workspace.ID {
+		hyprctl(fmt.Sprintf("dispatch workspace %d", workspace.ID))
+	}
 	clients := query[[]Client]("j/clients")
 	var launched []string
 
