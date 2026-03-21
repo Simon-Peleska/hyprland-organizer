@@ -19,6 +19,7 @@ type Client struct {
 	Class     string     `json:"class"`
 	Tags      []string   `json:"tags"`
 	At        [2]float64 `json:"at"`
+	Size      [2]float64 `json:"size"`
 	Workspace struct {
 		ID int `json:"id"`
 	} `json:"workspace"`
@@ -58,7 +59,25 @@ func main() {
 		tagNewClients(launched)
 	}
 
+	// Save cursor position before reordering (focuswindow warps cursor)
+	pos := query[struct {
+		X float64 `json:"x"`
+		Y float64 `json:"y"`
+	}]("j/cursorpos")
+
 	enforceOrder(apps, workspace.ID)
+
+	// Focus the window under the cursor and restore cursor position
+	updatedClients := query[[]Client]("j/clients")
+	for _, c := range updatedClients {
+		if c.Workspace.ID == workspace.ID &&
+			pos.X >= c.At[0] && pos.X < c.At[0]+c.Size[0] &&
+			pos.Y >= c.At[1] && pos.Y < c.At[1]+c.Size[1] {
+			hyprctl(fmt.Sprintf("dispatch focuswindow address:%s", c.Address))
+			break
+		}
+	}
+	hyprctl(fmt.Sprintf("dispatch movecursor %d %d", int(pos.X), int(pos.Y)))
 }
 
 func enforceOrder(apps []string, workspaceID int) {
