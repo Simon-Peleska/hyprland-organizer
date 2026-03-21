@@ -25,13 +25,15 @@ type Client struct {
 }
 
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Fprintf(os.Stderr, "Usage: %s app1 app2 app3\n", os.Args[0])
+	if len(os.Args) < 3 {
+		fmt.Fprintf(os.Stderr, "Usage: %s <workspace> app1 app2 app3\n", os.Args[0])
 		os.Exit(1)
 	}
 
-	apps := os.Args[1:]
-	workspace := query[struct{ ID int }]("j/activeworkspace")
+	apps := os.Args[2:]
+	workspace := struct{ ID int }{}
+	fmt.Sscanf(os.Args[1], "%d", &workspace.ID)
+	hyprctl(fmt.Sprintf("dispatch workspace %d", workspace.ID))
 	clients := query[[]Client]("j/clients")
 	var launched []string
 
