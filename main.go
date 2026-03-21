@@ -1,0 +1,164 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"net"
+	"os"
+	"strings"
+	"time"
+)
+
+const managedTag = "ho-managed"
+
+type Client struct {
+	Address   string   `json:"address"`
+	Class     string   `json:"class"`
+	Tags      []string `json:"tags"`
+	Workspace struct {
+		ID int `json:"id"`
+	} `json:"workspace"`
+}
+
+func main() {
+	if len(os.Args) < 2 {
+		fmt.Fprintf(os.Stderr, "Usage: %s app1 app2 app3\n", os.Args[0])
+		os.Exit(1)
+	}
+
+	apps := os.Args[1:]
+	workspace := query[struct{ ID int }]("j/activeworkspace")
+	clients := query[[]Client]("j/clients")
+	var launched []string
+
+	for _, app := range apps {
+		// Reuse existing tagged instance
+		if c := findTagged(clients, app); c != nil {
+			if c.Workspace.ID != workspace.ID {
+				hyprctl(fmt.Sprintf("dispatch movetoworkspacesilent %d,address:%s", workspace.ID, c.Address))
+			}
+			continue
+		}
+
+		// Launch new instance
+		hyprctl(fmt.Sprintf("dispatch exec [workspace %d silent] %s", workspace.ID, app))
+		launched = append(launched, app)
+	}
+
+	if len(launched) > 0 {
+		tagNewClients(launched)
+	}
+}
+
+func findTagged(clients []Client, app string) *Client {
+	app = strings.ToLower(app)
+	for i := range clients {
+		c := &clients[i]
+		if strings.Contains(strings.ToLower(c.Class), app) && hasTag(c) {
+			return c
+		}
+	}
+	return nil
+}
+
+func hasTag(c *Client) bool {
+	for _, t := range c.Tags {
+		if t == managedTag {
+			return true
+		}
+	}
+	return false
+}
+
+func tagNewClients(launched []string) {
+	remaining := make(map[string]bool, len(launched))
+	for _, app := range launched {
+		remaining[strings.ToLower(app)] = true
+	}
+
+	runtimeDir := os.Getenv("XDG_RUNTIME_DIR")
+	sig := os.Getenv("HYPRLAND_INSTANCE_SIGNATURE")
+	socketPath := fmt.Sprintf("%s/hypr/%s/.socket2.sock", runtimeDir, sig)
+
+	conn, err := net.Dial("unix", socketPath)
+	if err != nil {
+		log.Printf("failed to connect to event socket: %v", err)
+		return
+	}
+	defer conn.Close()
+
+	conn.SetDeadline(time.Now().Add(10 * time.Second))
+
+	buf := make([]byte, 4096)
+	var partial string
+	for len(remaining) > 0 {
+		n, err := conn.Read(buf)
+		if err != nil {
+			break
+		}
+		partial += string(buf[:n])
+		for {
+			idx := strings.Index(partial, "\n")
+			if idx < 0 {
+				break
+			}
+			line := partial[:idx]
+			partial = partial[idx+1:]
+
+			// openwindow>>ADDRESS,WORKSPACE,CLASS,TITLE
+			if !strings.HasPrefix(line, "openwindow>>") {
+				continue
+			}
+			parts := strings.SplitN(line[len("openwindow>>"):], ",", 4)
+			if len(parts) < 3 {
+				continue
+			}
+			address := "0x" + parts[0]
+			class := strings.ToLower(parts[2])
+
+			for app := range remaining {
+				if strings.Contains(class, app) {
+					hyprctl(fmt.Sprintf("dispatch tagwindow +%s address:%s", managedTag, address))
+					delete(remaining, app)
+					break
+				}
+			}
+		}
+	}
+}
+
+func query[T any](cmd string) T {
+	data := hyprctl(cmd)
+	var result T
+	if err := json.Unmarshal([]byte(data), &result); err != nil {
+		log.Fatalf("failed to parse %s response: %v", cmd, err)
+	}
+	return result
+}
+
+func hyprctl(cmd string) string {
+	runtimeDir := os.Getenv("XDG_RUNTIME_DIR")
+	sig := os.Getenv("HYPRLAND_INSTANCE_SIGNATURE")
+	if runtimeDir == "" || sig == "" {
+		log.Fatal("XDG_RUNTIME_DIR and HYPRLAND_INSTANCE_SIGNATURE must be set")
+	}
+
+	socketPath := fmt.Sprintf("%s/hypr/%s/.socket.sock", runtimeDir, sig)
+	conn, err := net.Dial("unix", socketPath)
+	if err != nil {
+		log.Fatalf("failed to connect to hyprland socket: %v", err)
+	}
+	defer conn.Close()
+
+	if _, err := conn.Write([]byte(cmd)); err != nil {
+		log.Fatalf("failed to send command: %v", err)
+	}
+
+	resp, err := io.ReadAll(conn)
+	if err != nil {
+		log.Fatalf("failed to read response: %v", err)
+	}
+	return string(resp)
+}
