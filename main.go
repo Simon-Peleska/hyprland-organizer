@@ -65,22 +65,24 @@ func main() {
 		Y float64 `json:"y"`
 	}]("j/cursorpos")
 
-	enforceOrder(apps, workspace.ID)
+	changed := enforceOrder(apps, workspace.ID)
 
-	// Focus the window under the cursor and restore cursor position
-	updatedClients := query[[]Client]("j/clients")
-	for _, c := range updatedClients {
-		if c.Workspace.ID == workspace.ID &&
-			pos.X >= c.At[0] && pos.X < c.At[0]+c.Size[0] &&
-			pos.Y >= c.At[1] && pos.Y < c.At[1]+c.Size[1] {
-			hyprctl(fmt.Sprintf("dispatch focuswindow address:%s", c.Address))
-			break
+	if changed {
+		// Focus the window under the cursor and restore cursor position
+		updatedClients := query[[]Client]("j/clients")
+		for _, c := range updatedClients {
+			if c.Workspace.ID == workspace.ID &&
+				pos.X >= c.At[0] && pos.X < c.At[0]+c.Size[0] &&
+				pos.Y >= c.At[1] && pos.Y < c.At[1]+c.Size[1] {
+				hyprctl(fmt.Sprintf("dispatch focuswindow address:%s", c.Address))
+				break
+			}
 		}
+		hyprctl(fmt.Sprintf("dispatch movecursor %d %d", int(pos.X), int(pos.Y)))
 	}
-	hyprctl(fmt.Sprintf("dispatch movecursor %d %d", int(pos.X), int(pos.Y)))
 }
 
-func enforceOrder(apps []string, workspaceID int) {
+func enforceOrder(apps []string, workspaceID int) bool {
 	clients := query[[]Client]("j/clients")
 
 	// Collect clients on this workspace matching our apps, in parameter order
@@ -100,7 +102,7 @@ func enforceOrder(apps []string, workspaceID int) {
 	}
 
 	if len(entries) < 2 {
-		return
+		return false
 	}
 
 	// Get the target x-positions by sorting current positions
@@ -110,12 +112,25 @@ func enforceOrder(apps []string, workspaceID int) {
 	}
 	sort.Float64s(sorted)
 
+	// Check if windows are already in the correct order
+	alreadyOrdered := true
+	for i, e := range entries {
+		if e.x != sorted[i] {
+			alreadyOrdered = false
+			break
+		}
+	}
+	if alreadyOrdered {
+		return false
+	}
+
 	// Swap windows that aren't in the right position
 	// Focus each window in reverse parameter order so the first ends up leftmost
 	for i := len(entries) - 1; i >= 0; i-- {
 		hyprctl(fmt.Sprintf("dispatch focuswindow address:%s", entries[i].address))
 		hyprctl("dispatch movewindow l")
 	}
+	return true
 }
 
 func findTagged(clients []Client, app string) *Client {
