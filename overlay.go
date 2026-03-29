@@ -25,6 +25,10 @@ type overlayHandle struct {
 }
 
 func (h *overlayHandle) destroy() {
+	// Wait for the compositor to render at least one frame with the new workspace
+	// content before removing the overlay, so there's no flash of background.
+	h.wl.roundtrip()
+
 	for i := range h.lsurfaces {
 		h.wl.send(h.lsurfaces[i], 7, nil, -1) // zwlr_layer_surface_v1.destroy
 		h.wl.send(h.surfaces[i], 0, nil, -1)  // wl_surface.destroy

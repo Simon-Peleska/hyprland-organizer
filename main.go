@@ -35,6 +35,7 @@ func main() {
 	workspace := struct{ ID int }{}
 	fmt.Sscanf(os.Args[1], "%d", &workspace.ID)
 	active := query[struct{ ID int }]("j/activeworkspace")
+	var overlayCleanup func()
 	if active.ID != workspace.ID {
 		// Start listening for the workspace switch event before triggering it,
 		// so we don't miss it in case the switch is very fast.
@@ -52,9 +53,7 @@ func main() {
 		hyprctl(fmt.Sprintf("dispatch workspace %d", workspace.ID))
 
 		<-switchDone
-		if cleanup != nil {
-			cleanup()
-		}
+		overlayCleanup = cleanup
 	}
 	clients := query[[]Client]("j/clients")
 	var launched []string
@@ -83,20 +82,23 @@ func main() {
 		Y float64 `json:"y"`
 	}]("j/cursorpos")
 
-	changed := enforceOrder(apps, workspace.ID)
+	enforceOrder(apps, workspace.ID)
 
-	if changed {
-		// Focus the window under the cursor and restore cursor position
-		updatedClients := query[[]Client]("j/clients")
-		for _, c := range updatedClients {
-			if c.Workspace.ID == workspace.ID &&
-				pos.X >= c.At[0] && pos.X < c.At[0]+c.Size[0] &&
-				pos.Y >= c.At[1] && pos.Y < c.At[1]+c.Size[1] {
-				hyprctl(fmt.Sprintf("dispatch focuswindow address:%s", c.Address))
-				break
-			}
+	// Focus the window under the cursor. focuswindow warps the cursor, so always
+	// restore it afterward.
+	updatedClients := query[[]Client]("j/clients")
+	for _, c := range updatedClients {
+		if c.Workspace.ID == workspace.ID &&
+			pos.X >= c.At[0] && pos.X < c.At[0]+c.Size[0] &&
+			pos.Y >= c.At[1] && pos.Y < c.At[1]+c.Size[1] {
+			hyprctl(fmt.Sprintf("dispatch focuswindow address:%s", c.Address))
+			hyprctl(fmt.Sprintf("dispatch movecursor %d %d", int(pos.X), int(pos.Y)))
+			break
 		}
-		hyprctl(fmt.Sprintf("dispatch movecursor %d %d", int(pos.X), int(pos.Y)))
+	}
+
+	if overlayCleanup != nil {
+		overlayCleanup()
 	}
 }
 
