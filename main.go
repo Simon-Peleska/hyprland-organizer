@@ -36,7 +36,25 @@ func main() {
 	fmt.Sscanf(os.Args[1], "%d", &workspace.ID)
 	active := query[struct{ ID int }]("j/activeworkspace")
 	if active.ID != workspace.ID {
+		// Start listening for the workspace switch event before triggering it,
+		// so we don't miss it in case the switch is very fast.
+		switchDone := make(chan struct{})
+		go func() {
+			defer close(switchDone)
+			waitForWorkspaceSwitch(workspace.ID)
+		}()
+
+		cleanup, err := showScreenshotOverlay()
+		if err != nil {
+			log.Printf("overlay: %v", err)
+		}
+
 		hyprctl(fmt.Sprintf("dispatch workspace %d", workspace.ID))
+
+		<-switchDone
+		if cleanup != nil {
+			cleanup()
+		}
 	}
 	clients := query[[]Client]("j/clients")
 	var launched []string
